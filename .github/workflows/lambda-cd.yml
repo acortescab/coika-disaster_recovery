@@ -50,8 +50,20 @@ jobs:
             ${{ steps.ecr.outputs.registry }}/${{ inputs.ecr_repository }}:${{ github.sha }}
             ${{ steps.ecr.outputs.registry }}/${{ inputs.ecr_repository }}:latest
 
+      # The function is created by the infra repository from the first image pushed here, so on the
+      # very first run it does not exist yet: the image stays in ECR and the step is skipped.
       - name: Deploy image to Lambda
         run: |
+          if ! error=$(aws lambda get-function-configuration \
+            --function-name "${{ inputs.function_name }}" --no-cli-pager 2>&1 > /dev/null); then
+            # Only a missing function is skipped; any other error (e.g. permissions) fails the job.
+            if grep -q ResourceNotFoundException <<< "$error"; then
+              echo "::warning::Function ${{ inputs.function_name }} does not exist yet; the image was pushed, apply the infra repository to create it."
+              exit 0
+            fi
+            echo "$error" >&2
+            exit 1
+          fi
           aws lambda update-function-code \
             --function-name "${{ inputs.function_name }}" \
             --image-uri "${{ steps.ecr.outputs.registry }}/${{ inputs.ecr_repository }}:${{ github.sha }}" \
