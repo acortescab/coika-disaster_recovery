@@ -97,7 +97,8 @@ def lambda_handler(event, context):
     }
 
     def result(status: str, message: str = "", **extra) -> dict:
-        # `key` is always present (null until the backup succeeds) so the state machine can select it.
+        # `key` is always present (null until the backup succeeds) 
+        # so the state machine can select it.
         return {"status": status, "message": message, "key": None, **state, **extra}
 
     if time.time() - state["started_at"] > MAX_WAIT_SECONDS:
