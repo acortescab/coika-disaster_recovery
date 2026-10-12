@@ -1,9 +1,9 @@
-name: Terraform CI
+﻿name: Terraform CI
 
 on:
   pull_request:
     paths:
-      - "terraform/**"
+      - "infra/**"
       - ".github/workflows/terraform-ci.yml"
   workflow_dispatch:
 
@@ -34,7 +34,7 @@ jobs:
       TF_VAR_ecr_prefix: ${{ vars.ECR_REPOSITORY_PREFIX }}
     defaults:
       run:
-        working-directory: terraform
+        working-directory: infra
     steps:
       - uses: actions/checkout@v4
 
@@ -103,7 +103,7 @@ jobs:
                 ? ['<details><summary>Full plan</summary>', '', '```hcl', truncated ? plan.slice(0, limit) + '\n... (truncated, see the job logs)' : plan, '```', '', '</details>'].join('\n')
                 : '',
               '',
-              `_Commit ${context.sha.slice(0, 7)} · [workflow run](${context.serverUrl}/${context.repo.owner}/${context.repo.repo}/actions/runs/${context.runId})_`,
+              `_Commit ${context.sha.slice(0, 7)} Â· [workflow run](${context.serverUrl}/${context.repo.owner}/${context.repo.repo}/actions/runs/${context.runId})_`,
             ].join('\n');
 
             const { owner, repo } = context.repo;

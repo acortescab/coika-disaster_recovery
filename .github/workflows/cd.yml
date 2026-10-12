@@ -1,10 +1,10 @@
-name: CD
+﻿name: CD
 
 on:
   push:
     branches: [main]
     paths:
-      - "terraform/**"
+      - "infra/**"
       - ".github/workflows/terraform-cd.yml"
       - "lambdas/**"
       - "ruff.toml"
@@ -30,14 +30,14 @@ jobs:
         with:
           fetch-depth: 0
       # Terraform runs on manual dispatch, when there is no base to compare against, or when
-      # anything under terraform/ (or its workflow) changed.
+      # anything under infra/ (or its workflow) changed.
       - id: terraform
         run: |
           base="${{ github.event.before }}"
           changed=true
           if [ "${{ github.event_name }}" = push ] && [ -n "$base" ] \
             && [ "$base" != 0000000000000000000000000000000000000000 ] \
-            && git diff --quiet "$base" HEAD -- terraform .github/workflows/terraform-cd.yml; then
+            && git diff --quiet "$base" HEAD -- infra .github/workflows/terraform-cd.yml; then
             changed=false
           fi
           echo "changed=$changed" >> "$GITHUB_OUTPUT"

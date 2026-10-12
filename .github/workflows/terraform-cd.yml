@@ -1,4 +1,4 @@
-name: Terraform CD
+﻿name: Terraform CD
 
 on:
   # Called by cd.yml on pushes to main, so Terraform always runs before the lambdas deploy.
@@ -35,7 +35,7 @@ jobs:
       TF_VAR_ecr_prefix: ${{ vars.ECR_REPOSITORY_PREFIX }}
     defaults:
       run:
-        working-directory: terraform
+        working-directory: infra
     steps:
       - uses: actions/checkout@v4
 

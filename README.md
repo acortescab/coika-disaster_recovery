@@ -1,8 +1,8 @@
-# coika-disaster_recovery
+﻿# coika-disaster_recovery
 
 Code of the lambdas used by the AWS disaster recovery of the Coika services. Each lambda is packaged as a container image, validated in CI (ruff + pytest) and pushed to ECR when merged to `main`.
 
-The ECR repository of each lambda is defined in `terraform/` in this repo. The rest of the infrastructure (the functions with their execution roles, environment and permissions, alarms, Step Functions, CodeBuild, GitHub OIDC roles) lives in the sibling repository **coika-disaster_recovery-infra**, which looks the repositories up.
+The ECR repository of each lambda is defined in `infra/` in this repo. The rest of the infrastructure (the functions with their execution roles, environment and permissions, alarms, Step Functions, CodeBuild, GitHub OIDC roles) lives in the sibling repository **coika-disaster_recovery-infra**, which looks the repositories up.
 
 ## Structure
 
@@ -14,9 +14,9 @@ lambdas/<service>/<lambda>/    # one folder per lambda (app.py, Dockerfile, requ
   workflows/cd.yml             # on push to main: detects changed lambdas and runs lambda-cd.yml in a matrix
   workflows/lambda-cd.yml      # reusable: build, push to ECR and update the function for ONE lambda
   scripts/changed_lambdas.py   # computes the matrix of affected lambdas
-  workflows/terraform-ci.yml   # on PR: fmt, validate and plan of terraform/ (the plan is commented on the PR)
-  workflows/terraform-cd.yml   # on push to main: plan + apply of terraform/ (needs approval of the `prod` environment)
-terraform/
+  workflows/terraform-ci.yml   # on PR: fmt, validate and plan of infra/ (the plan is commented on the PR)
+  workflows/terraform-cd.yml   # on push to main: plan + apply of infra/ (needs approval of the `prod` environment)
+infra/
   main.tf                      # one module "ecr_repository" call per lambda
   modules/ecr_repository/      # ECR repository + lifecycle policy
 ruff.toml                      # shared lint config
@@ -32,11 +32,11 @@ Current lambdas:
 ## Adding a new lambda
 
 1. Create `lambdas/<service>/<name>/` with `app.py`, `Dockerfile`, `requirements.txt`, `requirements-dev.txt` and `tests/` (copy an existing one).
-2. In `terraform/main.tf`, add a `module "ecr_repository"` call for it (it creates the ECR repository `<ECR_REPOSITORY_PREFIX>/<service>/<name>`) and apply it.
+2. In `infra/main.tf`, add a `module "ecr_repository"` call for it (it creates the ECR repository `<ECR_REPOSITORY_PREFIX>/<service>/<name>`) and apply it.
 3. Merge the code to `main`: the lambda CD builds and pushes the first image. Its `update-function-code` step is skipped with a warning while the function does not exist yet.
 4. In the infra repository, add the `module "lambda_container"` call (function `<LAMBDA_NAME_PREFIX>-<service>-<name>`, role, environment, permissions) and apply it. The function is created from the image pushed in step 3.
 
-No YAML needs to be touched: `ci.yml` and `cd.yml` discover any `lambdas/*/*/` folder that has a `Dockerfile`. The repository and function names are computed in `changed_lambdas.py` and must stay in sync with `terraform/modules/ecr_repository` and the `lambda_container` module of the infra repository.
+No YAML needs to be touched: `ci.yml` and `cd.yml` discover any `lambdas/*/*/` folder that has a `Dockerfile`. The repository and function names are computed in `changed_lambdas.py` and must stay in sync with `infra/modules/ecr_repository` and the `lambda_container` module of the infra repository.
 
 ## Local development
 
@@ -71,7 +71,7 @@ Environment `prod` (Settings > Environments) with required reviewers: the apply 
 
 ## AWS roles and first apply
 
-The three roles are defined in `terraform/iam.tf`, so this repo does not depend on any other repository for its pipeline:
+The three roles are defined in `infra/iam.tf`, so this repo does not depend on any other repository for its pipeline:
 
 - **deploy** (`AWS_ROLE_ARN`): the `main` branch only; pushes images to the ECR repositories and runs `lambda:UpdateFunctionCode` / `lambda:GetFunctionConfiguration` on the functions.
 - **plan**: pull requests only; read-only plus the state lock.
@@ -96,4 +96,4 @@ Set by Terraform in the infra repository, not here.
 
 ## License
 
-[MIT](LICENSE) (c) 2026 Alejandro Cortés Cabrejas.
+[MIT](LICENSE) (c) 2026 Alejandro CortÃ©s Cabrejas.
