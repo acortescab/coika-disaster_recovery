@@ -29,7 +29,7 @@ def client_error(code, operation):
 @pytest.fixture
 def app_module(monkeypatch):
     clients = {"ec2": Mock(), "ssm": Mock()}
-    monkeypatch.setattr(boto3, "client", lambda service: clients[service])
+    monkeypatch.setattr(boto3, "client", lambda service, **kwargs: clients[service])
     monkeypatch.setenv("DB_INSTANCE_NAME", "db-host")
 
     app_path = Path(__file__).resolve().parents[1] / "app.py"
@@ -75,6 +75,39 @@ def test_finds_the_host_by_name_and_restores(app_module):
     assert kwargs["InstanceIds"] == ["i-1"]
     assert kwargs["DocumentName"] == "AWS-RunShellScript"
     assert "/opt/db/restore.sh --yes --if-empty" in kwargs["Parameters"]["commands"][-1]
+
+
+def test_failback_restores_a_given_dump_over_existing_data(app_module, monkeypatch):
+    app, ec2, ssm, _, context = app_module
+    ec2.describe_instances.return_value = HOST
+    ssm.send_command.return_value = {"Command": {"CommandId": "c-1"}}
+    ssm.get_command_invocation.return_value = {"Status": "Success"}
+    key = "postgres/db_20261012T100000Z.sql.gz"
+
+    created = []
+    mocks = {"ec2": ec2, "ssm": ssm}
+    monkeypatch.setattr(
+        app.boto3, "client", lambda service, **kwargs: created.append(kwargs) or mocks[service]
+    )
+
+    result = app.lambda_handler({"key": key, "overwrite": True, "region": "eu-west-1"}, context)
+
+    assert created == [{"region_name": "eu-west-1"}] * 2  # ec2 and ssm of the primary region
+    assert result["region"] == "eu-west-1"
+    commands = ssm.send_command.call_args.kwargs["Parameters"]["commands"]
+    assert commands[-1] == f"sudo -u ubuntu /opt/db/restore.sh --yes {key}"  # no --if-empty
+    assert "head-object" in commands[1] and key in commands[1]  # waits for the replication
+    assert (result["key"], result["overwrite"]) == (key, True)
+
+
+def test_rejects_a_key_with_shell_characters(app_module):
+    app, ec2, ssm, _, context = app_module
+
+    result = app.lambda_handler({"key": "x; reboot"}, context)
+
+    assert result["status"] == "Failed"
+    ec2.describe_instances.assert_not_called()
+    ssm.send_command.assert_not_called()
 
 
 def test_waits_for_the_ssm_agent_and_asks_to_be_called_again(app_module):

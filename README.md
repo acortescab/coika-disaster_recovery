@@ -27,7 +27,8 @@ Current lambdas:
 | Lambda | Description |
 | --- | --- |
 | `auth_service/health_check` | Sends a GET to `HEALTH_URL` and publishes the `BackendHealth` metric to CloudWatch (`Coika/DisasterRecovery`). |
-| `auth_service/restore_db` | Called by the failover state machine after the deploy: runs `restore.sh --yes --if-empty` on the DB host of the DR region through SSM and waits for it. It returns `InProgress` if the restore outlasts the invocation, and the state machine calls it again. |
+| `auth_service/restore_db` | Called by the failover state machine after the deploy: runs `restore.sh --yes --if-empty` on the DB host of the DR region through SSM and waits for it. It returns `InProgress` if the restore outlasts the invocation, and the state machine calls it again. Optional input used by the failback to restore the primary host: `region` (region of the DB host), `key` (restore that dump, waiting until it has been replicated to the bucket of its region) and `overwrite` (restore over existing data). |
+| `auth_service/backup_db` | Used by the failback state machine: runs `backup.sh` on the DB host of the DR region through SSM, waits for it and returns the `key` of the uploaded dump (the bucket replicates it to the primary region). Like `restore_db`, it returns `InProgress` when it outlasts the invocation. |
 | `auth_service/primary_recovery_check` | Runs on a schedule in the DR region. While the failover state is `DR_ACTIVE` it probes the primary region (every probe must answer, plus the optional `PRIMARY_HEALTH_URL`) and counts consecutive healthy runs in `recovery_streak`; any failure resets it. At `RECOVERY_THRESHOLD` it sends one SNS notification that a failback is possible. In any other state it does nothing. |
 
 ## Adding a new lambda
@@ -94,6 +95,7 @@ Set by Terraform in the infra repository, not here.
 
 - `auth_service/health_check`: `HEALTH_URL` (required), URL of the backend health endpoint.
 - `auth_service/primary_recovery_check`: `STATE_TABLE` (failover state table), `SNS_TOPIC_ARN`, `PRIMARY_REGION` and `PROBE_SERVICES` (required); `PRIMARY_HEALTH_URL` (optional, health endpoint of the primary backend), `RECOVERY_THRESHOLD` (default 12 consecutive healthy runs), `SERVICE_KEY` (default `auth_service`).
+- `auth_service/backup_db`: `DB_INSTANCE_NAME` (required), `MAX_WAIT_SECONDS` (optional, default 1800).
 - `auth_service/restore_db`: `DB_INSTANCE_NAME` (required), `Name` tag of the DB host; `MAX_WAIT_SECONDS` (optional, default 2700), total time to wait for a restore.
 
 ## License
