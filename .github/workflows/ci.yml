@@ -1,0 +1,45 @@
+name: CI
+
+on:
+  pull_request:
+    paths:
+      - "lambdas/**"
+      - ".github/**"
+      - "ruff.toml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  detect:
+    name: Detect changes
+    runs-on: ubuntu-latest
+    outputs:
+      matrix: ${{ steps.detect.outputs.matrix }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - id: detect
+        run: |
+          python .github/scripts/changed_lambdas.py \
+            --base "${{ github.event.pull_request.base.sha }}"
+
+  lambda:
+    name: ${{ matrix.lambda.name }}
+    needs: detect
+    if: needs.detect.outputs.matrix != '[]'
+    strategy:
+      fail-fast: false
+      matrix:
+        lambda: ${{ fromJSON(needs.detect.outputs.matrix) }}
+    permissions:
+      contents: read
+    uses: ./.github/workflows/lambda-ci.yml
+    with:
+      lambda_path: ${{ matrix.lambda.path }}
