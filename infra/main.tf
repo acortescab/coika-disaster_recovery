@@ -14,6 +14,14 @@ module "auth_service_restore_db" {
   name       = "restore_db"
 }
 
+module "auth_service_backup_db" {
+  source = "./modules/ecr_repository"
+
+  ecr_prefix = var.ecr_prefix
+  service    = "auth_service"
+  name       = "backup_db"
+}
+
 module "auth_service_region_check" {
   source = "./modules/ecr_repository"
 
