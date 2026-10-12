@@ -22,6 +22,14 @@ module "auth_service_region_check" {
   name       = "region_check"
 }
 
+module "auth_service_primary_recovery_check" {
+  source = "./modules/ecr_repository"
+
+  ecr_prefix = var.ecr_prefix
+  service    = "auth_service"
+  name       = "primary_recovery_check"
+}
+
 module "auth_service_health_check" {
   source = "./modules/ecr_repository"
 
