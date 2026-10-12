@@ -2,7 +2,7 @@
 
 Code of the lambdas used by the AWS disaster recovery of the Coika services. Each lambda is packaged as a container image, validated in CI (ruff + pytest) and pushed to ECR when merged to `main`.
 
-The infrastructure that creates and wires them (ECR repositories, functions, IAM, alarms, Step Functions, CodeBuild) lives in the sibling repository **coika-disaster_recovery-infra**. This repo only builds and deploys code.
+The ECR repository of each lambda is defined in `terraform/` in this repo. The rest of the infrastructure (the functions with their execution roles, environment and permissions, alarms, Step Functions, CodeBuild, GitHub OIDC roles) lives in the sibling repository **coika-disaster_recovery-infra**, which looks the repositories up.
 
 ## Structure
 
@@ -14,6 +14,11 @@ lambdas/<service>/<lambda>/    # one folder per lambda (app.py, Dockerfile, requ
   workflows/cd.yml             # on push to main: detects changed lambdas and runs lambda-cd.yml in a matrix
   workflows/lambda-cd.yml      # reusable: build, push to ECR and update the function for ONE lambda
   scripts/changed_lambdas.py   # computes the matrix of affected lambdas
+  workflows/terraform-ci.yml   # on PR: fmt, validate and plan of terraform/ (the plan is commented on the PR)
+  workflows/terraform-cd.yml   # on push to main: plan + apply of terraform/ (needs approval of the `prod` environment)
+terraform/
+  main.tf                      # one module "ecr_repository" call per lambda
+  modules/ecr_repository/      # ECR repository + lifecycle policy
 ruff.toml                      # shared lint config
 ```
 
@@ -27,9 +32,11 @@ Current lambdas:
 ## Adding a new lambda
 
 1. Create `lambdas/<service>/<name>/` with `app.py`, `Dockerfile`, `requirements.txt`, `requirements-dev.txt` and `tests/` (copy an existing one).
-2. In the infra repository, add a `module "lambda_container"` call for it (it creates the ECR repository `<ECR_REPOSITORY_PREFIX>/<service>/<name>` and the function `<LAMBDA_NAME_PREFIX>-<service>-<name>`) and apply it **before** merging here: the CD updates a function that must already exist.
+2. In `terraform/main.tf`, add a `module "ecr_repository"` call for it (it creates the ECR repository `<ECR_REPOSITORY_PREFIX>/<service>/<name>`) and apply it.
+3. Merge the code to `main`: the lambda CD builds and pushes the first image. Its `update-function-code` step is skipped with a warning while the function does not exist yet.
+4. In the infra repository, add the `module "lambda_container"` call (function `<LAMBDA_NAME_PREFIX>-<service>-<name>`, role, environment, permissions) and apply it. The function is created from the image pushed in step 3.
 
-No YAML needs to be touched: `ci.yml` and `cd.yml` discover any `lambdas/*/*/` folder that has a `Dockerfile`. The repository and function names are computed in `changed_lambdas.py` and must stay in sync with `modules/lambda_container` of the infra repository.
+No YAML needs to be touched: `ci.yml` and `cd.yml` discover any `lambdas/*/*/` folder that has a `Dockerfile`. The repository and function names are computed in `changed_lambdas.py` and must stay in sync with `terraform/modules/ecr_repository` and the `lambda_container` module of the infra repository.
 
 ## Local development
 
@@ -53,12 +60,32 @@ pytest
 
 | Type | Name | Purpose |
 | --- | --- | --- |
-| Secret | `AWS_ROLE_ARN` | IAM role assumed by the workflow via OIDC (output of the infra repository) |
+| Secret | `AWS_ROLE_ARN` | Deploy role of the lambda CD (output `deploy_role_arn`) |
+| Secret | `AWS_PLAN_ROLE_ARN` | Read-only role for `terraform plan` on PRs (output `plan_role_arn`) |
+| Secret | `AWS_APPLY_ROLE_ARN` | Role for `terraform apply`, assumable from the `prod` environment only (output `apply_role_arn`) |
 | Variable | `AWS_REGION` | **DR region** (same value as `dr_region` in the infra repository), used for ECR and Lambda |
 | Variable | `ECR_REPOSITORY_PREFIX` | Prefix of the ECR repositories, e.g. `coika/disaster_recovery` |
 | Variable | `LAMBDA_NAME_PREFIX` | Prefix of the function names, e.g. `coika` (same as `name_prefix` in the infra repository) |
 
-The role is created by the infra repository (`github_oidc.tf`): it trusts the `main` branch of this repository only, and can push to the ECR repositories and run `lambda:UpdateFunctionCode` / `lambda:GetFunctionConfiguration` on the functions.
+Environment `prod` (Settings > Environments) with required reviewers: the apply job waits for their approval.
+
+## AWS roles and first apply
+
+The three roles are defined in `terraform/iam.tf`, so this repo does not depend on any other repository for its pipeline:
+
+- **deploy** (`AWS_ROLE_ARN`): the `main` branch only; pushes images to the ECR repositories and runs `lambda:UpdateFunctionCode` / `lambda:GetFunctionConfiguration` on the functions.
+- **plan**: pull requests only; read-only plus the state lock.
+- **apply**: environment `prod` only; manages the ECR repositories and reads/writes only `lambdas/terraform.tfstate`. It has no IAM write permissions, so the pipeline can never change the roles.
+
+A pipeline needs its roles to exist, so the **first apply is done by hand** from a workstation with admin credentials, and so is any later change to `iam.tf` (a PR that changes a role fails at apply with AccessDenied):
+
+```powershell
+cd terraform
+terraform init
+terraform apply -var dr_region=eu-central-1
+```
+
+Then copy the outputs (`deploy_role_arn`, `plan_role_arn`, `apply_role_arn`) to the three secrets above. The GitHub OIDC provider is looked up (one per AWS account); set `create_github_oidc_provider = true` if the account has none.
 
 ## Lambda environment variables
 

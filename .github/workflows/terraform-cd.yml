@@ -1,0 +1,64 @@
+name: Terraform CD
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - "terraform/**"
+      - ".github/workflows/terraform-cd.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+# Never cancel a deployment halfway through (it could also leave the Terraform state locked).
+concurrency:
+  group: ${{ github.workflow }}
+  cancel-in-progress: false
+
+env:
+  # The state was written by this version; an older Terraform refuses to read it.
+  TF_VERSION: "1.15.5"
+
+jobs:
+  terraform-apply:
+    name: Terraform apply
+    runs-on: ubuntu-latest
+    # Required reviewers on this environment are the approval gate. The AWS apply role
+    # trusts this environment only.
+    environment: prod
+    permissions:
+      contents: read
+      id-token: write
+    env:
+      TF_IN_AUTOMATION: "true"
+      TF_VAR_dr_region: ${{ vars.AWS_REGION }}
+      TF_VAR_name_prefix: ${{ vars.LAMBDA_NAME_PREFIX }}
+      TF_VAR_ecr_prefix: ${{ vars.ECR_REPOSITORY_PREFIX }}
+    defaults:
+      run:
+        working-directory: terraform
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: hashicorp/setup-terraform@v3
+        with:
+          terraform_version: ${{ env.TF_VERSION }}
+          terraform_wrapper: false
+
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ secrets.AWS_APPLY_ROLE_ARN }}
+          aws-region: ${{ vars.AWS_REGION }}
+
+      - name: Terraform init
+        run: terraform init -input=false
+
+      - name: Terraform plan
+        run: terraform plan -input=false -no-color -lock-timeout=5m -out=tfplan
+
+      # Applies exactly the plan above, not a newer one.
+      - name: Terraform apply
+        run: terraform apply -input=false -no-color -lock-timeout=5m tfplan
+
