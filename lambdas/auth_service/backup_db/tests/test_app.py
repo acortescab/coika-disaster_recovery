@@ -55,6 +55,27 @@ def test_reports_no_host_when_no_instance_is_running(app_module):
     ssm.send_command.assert_not_called()
 
 
+def test_backs_up_the_host_and_region_named_in_the_input(app_module, monkeypatch):
+    app, ec2, ssm, _, context = app_module
+    ec2.describe_instances.return_value = HOST
+    ssm.send_command.return_value = {"Command": {"CommandId": "c-1"}}
+    ssm.get_command_invocation.return_value = {
+        "Status": "Success",
+        "StandardOutputContent": f"Success: {KEY}",
+    }
+    created = []
+    mocks = {"ec2": ec2, "ssm": ssm}
+    monkeypatch.setattr(
+        app.boto3, "client", lambda service, **kwargs: created.append(kwargs) or mocks[service]
+    )
+
+    result = app.lambda_handler({"region": "eu-west-1", "instance_name": "other-db"}, context)
+
+    assert created == [{"region_name": "eu-west-1"}] * 2
+    assert ec2.describe_instances.call_args.kwargs["Filters"][0]["Values"] == ["other-db"]
+    assert (result["region"], result["instance_name"]) == ("eu-west-1", "other-db")
+
+
 def test_runs_the_backup_and_returns_the_dump_key(app_module):
     app, ec2, ssm, _, context = app_module
     ec2.describe_instances.return_value = HOST

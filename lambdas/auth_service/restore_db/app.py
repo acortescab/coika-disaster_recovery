@@ -29,10 +29,10 @@ WAIT_FOR_DB = (
 )
 
 
-def build_commands(key: str | None, overwrite: bool) -> list[str]:
-    """Failover (defaults): the newest dump, and --if-empty makes a repeated failover skip the
-    restore instead of overwriting newer data. Failback: a given dump (`key`) that may still be
-    replicating into this region's bucket, restored over the existing data (`overwrite`)."""
+def build_commands(key: str | None) -> list[str]:
+    """Restores over the existing data (restore.sh drops the public schema first): the newest dump,
+    or a given one (`key`) that may still be replicating into this region's bucket. Whoever calls
+    this must not do it while the database holds data that should be kept."""
     commands = [WAIT_FOR_DB]
     if key:
         commands.append(
@@ -41,18 +41,16 @@ def build_commands(key: str | None, overwrite: bool) -> list[str]:
             f"{key} >/dev/null 2>&1 && break; sleep 10; done"
         )
     restore = "sudo -u ubuntu /opt/db/restore.sh --yes"
-    if not overwrite:
-        restore += " --if-empty"
     if key:
         restore += f" {key}"
     commands.append(restore)
     return commands
 
 
-def find_db_host(ec2) -> str | None:
+def find_db_host(ec2, instance_name: str) -> str | None:
     response = ec2.describe_instances(
         Filters=[
-            {"Name": "tag:Name", "Values": [DB_INSTANCE_NAME]},
+            {"Name": "tag:Name", "Values": [instance_name]},
             {"Name": "instance-state-name", "Values": ["running"]},
         ]
     )
@@ -60,9 +58,7 @@ def find_db_host(ec2) -> str | None:
     return ids[0] if ids else None
 
 
-def send_restore(
-    ssm, instance_id: str, deadline: float, key: str | None, overwrite: bool
-) -> str | None:
+def send_restore(ssm, instance_id: str, deadline: float, key: str | None) -> str | None:
     """Start the restore on the host, or None if its SSM agent is not registered by the deadline."""
     while True:
         try:
@@ -70,7 +66,7 @@ def send_restore(
                 InstanceIds=[instance_id],
                 DocumentName="AWS-RunShellScript",
                 Parameters={
-                    "commands": build_commands(key, overwrite),
+                    "commands": build_commands(key),
                     "executionTimeout": [str(COMMAND_TIMEOUT_SECONDS)],
                 },
             )
@@ -102,14 +98,14 @@ def wait_for_command(ssm, command_id: str, instance_id: str, deadline: float) ->
 
 
 def lambda_handler(event, context):
-    """Restores the newest dump on the DB host of this region.
+    """Restores a dump over the database of a DB host. DESTRUCTIVE: the existing data is replaced.
 
     A restore can outlast one invocation, so the result carries what is needed to resume it: while
     the status is "InProgress" the state machine calls this function again with the same ids.
-    Optional input, echoed back so a resume keeps it (the failback uses all three to restore the
-    primary host): `region` (region of the DB host; default the region of the function), `key`
-    (restore that dump instead of the newest) and `overwrite` (restore even if the database
-    already has tables).
+    Optional input, echoed back so a resume keeps it: `region` (region of the DB host; default the
+    region of the function), `instance_name` (Name tag of the DB host; default DB_INSTANCE_NAME) and
+    `key` (restore that dump instead of the newest). They make the function reusable for any
+    database host and for the failback.
     Statuses: Success, InProgress, NoHost, Failed.
     """
     state = {
@@ -117,8 +113,8 @@ def lambda_handler(event, context):
         "command_id": event.get("command_id"),
         "started_at": event.get("started_at") or time.time(),
         "region": event.get("region"),
+        "instance_name": event.get("instance_name") or DB_INSTANCE_NAME,
         "key": event.get("key"),
-        "overwrite": bool(event.get("overwrite")),
     }
     ec2 = boto3.client("ec2", region_name=state["region"])
     ssm = boto3.client("ssm", region_name=state["region"])
@@ -135,14 +131,12 @@ def lambda_handler(event, context):
     deadline = time.time() + context.get_remaining_time_in_millis() / 1000 - SAFETY_MARGIN_SECONDS
 
     if not state["instance_id"]:
-        state["instance_id"] = find_db_host(ec2)
+        state["instance_id"] = find_db_host(ec2, state["instance_name"])
         if not state["instance_id"]:
-            return result("NoHost", f"No running instance named {DB_INSTANCE_NAME}")
+            return result("NoHost", f"No running instance named {state['instance_name']}")
 
     if not state["command_id"]:
-        state["command_id"] = send_restore(
-            ssm, state["instance_id"], deadline, state["key"], state["overwrite"]
-        )
+        state["command_id"] = send_restore(ssm, state["instance_id"], deadline, state["key"])
         if not state["command_id"]:
             return result("InProgress", "Waiting for the SSM agent of the DB host")
 

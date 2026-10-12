@@ -74,10 +74,10 @@ def test_finds_the_host_by_name_and_restores(app_module):
     kwargs = ssm.send_command.call_args.kwargs
     assert kwargs["InstanceIds"] == ["i-1"]
     assert kwargs["DocumentName"] == "AWS-RunShellScript"
-    assert "/opt/db/restore.sh --yes --if-empty" in kwargs["Parameters"]["commands"][-1]
+    assert kwargs["Parameters"]["commands"][-1] == "sudo -u ubuntu /opt/db/restore.sh --yes"
 
 
-def test_failback_restores_a_given_dump_over_existing_data(app_module, monkeypatch):
+def test_restores_a_given_dump_from_another_region(app_module, monkeypatch):
     app, ec2, ssm, _, context = app_module
     ec2.describe_instances.return_value = HOST
     ssm.send_command.return_value = {"Command": {"CommandId": "c-1"}}
@@ -90,14 +90,25 @@ def test_failback_restores_a_given_dump_over_existing_data(app_module, monkeypat
         app.boto3, "client", lambda service, **kwargs: created.append(kwargs) or mocks[service]
     )
 
-    result = app.lambda_handler({"key": key, "overwrite": True, "region": "eu-west-1"}, context)
+    result = app.lambda_handler({"key": key, "region": "eu-west-1"}, context)
 
     assert created == [{"region_name": "eu-west-1"}] * 2  # ec2 and ssm of the primary region
     assert result["region"] == "eu-west-1"
     commands = ssm.send_command.call_args.kwargs["Parameters"]["commands"]
-    assert commands[-1] == f"sudo -u ubuntu /opt/db/restore.sh --yes {key}"  # no --if-empty
+    assert commands[-1] == f"sudo -u ubuntu /opt/db/restore.sh --yes {key}"
     assert "head-object" in commands[1] and key in commands[1]  # waits for the replication
-    assert (result["key"], result["overwrite"]) == (key, True)
+    assert result["key"] == key
+
+
+def test_looks_for_the_host_named_in_the_input(app_module):
+    app, ec2, _, _, context = app_module
+    ec2.describe_instances.return_value = {"Reservations": []}
+
+    result = app.lambda_handler({"instance_name": "other-db"}, context)
+
+    assert ec2.describe_instances.call_args.kwargs["Filters"][0]["Values"] == ["other-db"]
+    assert result["instance_name"] == "other-db"
+    assert "other-db" in result["message"]
 
 
 def test_rejects_a_key_with_shell_characters(app_module):
