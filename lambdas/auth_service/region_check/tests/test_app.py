@@ -12,7 +12,7 @@ def load_app(monkeypatch, services="ec2,sts,s3", min_failed="2"):
     monkeypatch.setenv("MIN_FAILED_PROBES", min_failed)
 
     app_path = Path(__file__).resolve().parents[1] / "app.py"
-    spec = importlib.util.spec_from_file_location("region_probe_app", app_path)
+    spec = importlib.util.spec_from_file_location("region_check_app", app_path)
     app = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(app)
     return app
