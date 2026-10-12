@@ -87,7 +87,7 @@ def test_a_successful_command_without_a_key_is_a_failure(app_module):
     result = app.lambda_handler({"instance_id": "i-1", "command_id": "c-1"}, context)
 
     assert result["status"] == "Failed"
-    assert "key" not in result
+    assert result["key"] is None
 
 
 def test_waits_for_the_ssm_agent_and_asks_to_be_called_again(app_module):
