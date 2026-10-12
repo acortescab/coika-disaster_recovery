@@ -1,19 +1,17 @@
 name: Terraform CD
 
 on:
-  push:
-    branches: [main]
-    paths:
-      - "terraform/**"
-      - ".github/workflows/terraform-cd.yml"
+  # Called by cd.yml on pushes to main, so Terraform always runs before the lambdas deploy.
+  workflow_call:
   workflow_dispatch:
 
 permissions:
   contents: read
 
 # Never cancel a deployment halfway through (it could also leave the Terraform state locked).
+# Fixed group name: github.workflow would be the caller's name when called from cd.yml.
 concurrency:
-  group: ${{ github.workflow }}
+  group: terraform-apply
   cancel-in-progress: false
 
 env:

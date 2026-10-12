@@ -4,6 +4,8 @@ on:
   push:
     branches: [main]
     paths:
+      - "terraform/**"
+      - ".github/workflows/terraform-cd.yml"
       - "lambdas/**"
       - "ruff.toml"
   workflow_dispatch:
@@ -22,10 +24,23 @@ jobs:
     runs-on: ubuntu-latest
     outputs:
       matrix: ${{ steps.detect.outputs.matrix }}
+      terraform: ${{ steps.terraform.outputs.changed }}
     steps:
       - uses: actions/checkout@v4
         with:
           fetch-depth: 0
+      # Terraform runs on manual dispatch, when there is no base to compare against, or when
+      # anything under terraform/ (or its workflow) changed.
+      - id: terraform
+        run: |
+          base="${{ github.event.before }}"
+          changed=true
+          if [ "${{ github.event_name }}" = push ] && [ -n "$base" ] \
+            && [ "$base" != 0000000000000000000000000000000000000000 ] \
+            && git diff --quiet "$base" HEAD -- terraform .github/workflows/terraform-cd.yml; then
+            changed=false
+          fi
+          echo "changed=$changed" >> "$GITHUB_OUTPUT"
       - id: detect
         run: |
           python .github/scripts/changed_lambdas.py \
@@ -33,12 +48,25 @@ jobs:
             --ecr-prefix "${{ vars.ECR_REPOSITORY_PREFIX }}" \
             --name-prefix "${{ vars.LAMBDA_NAME_PREFIX }}"
 
-  # The ECR repository and the function of each lambda are created by the infra repository
-  # (coika-disaster_recovery-infra): apply it before deploying a new lambda.
+  # Infrastructure first: the lambdas only deploy once Terraform has applied (or had no changes).
+  terraform:
+    name: Terraform
+    needs: detect
+    if: needs.detect.outputs.terraform == 'true'
+    permissions:
+      contents: read
+      id-token: write
+    uses: ./.github/workflows/terraform-cd.yml
+    secrets: inherit
+
   deploy:
     name: ${{ matrix.lambda.name }}
-    needs: detect
-    if: needs.detect.outputs.matrix != '[]'
+    needs: [detect, terraform]
+    # always() so a skipped terraform job does not skip the lambdas; a failed one does.
+    if: >-
+      always() && needs.detect.result == 'success'
+      && (needs.terraform.result == 'success' || needs.terraform.result == 'skipped')
+      && needs.detect.outputs.matrix != '[]'
     strategy:
       fail-fast: false
       matrix:
